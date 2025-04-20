@@ -19,12 +19,12 @@ resolution = (128, 128)
 num_slots = 6
 num_iterations = 3
 hid_dim = 64
-model_dir = './tmp/model10.ckpt'
+model_dir = './tmp/model1000.ckpt'
 
 model = SlotAttentionAutoEncoder(resolution, num_slots, num_iterations, hid_dim).to(device)
-model.load_state_dict(torch.load(model_dir)['model_state_dict'])
+checkpoint = torch.load(model_dir,  map_location=device)
+model.load_state_dict(checkpoint['model_state_dict'])
 model.eval()
-
 # Forward pass (no grad)
 with torch.no_grad():
     recon_combined, recons, masks, slots = model(image)
