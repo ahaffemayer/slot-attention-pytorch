@@ -1,6 +1,6 @@
 import torch
 from dataset import PARTNET
-from model import SlotAttentionAutoEncoder
+from test import SlotAttention
 import matplotlib.pyplot as plt
 import numpy as np
 import random
@@ -21,7 +21,7 @@ num_iterations = 3
 hid_dim = 64
 model_dir = './tmp/model1000.ckpt'
 
-model = SlotAttentionAutoEncoder(resolution, num_slots, num_iterations, hid_dim).to(device)
+model = SlotAttention(resolution, num_slots, num_iterations, hid_dim).to(device)
 checkpoint = torch.load(model_dir,  map_location=device)
 model.load_state_dict(checkpoint['model_state_dict'])
 model.eval()
