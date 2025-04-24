@@ -54,7 +54,7 @@ model = SlotAttention(
     num_slots= 6, # opt.num_slots,,
     # slot_size=opt.hid_dim,
     # hidden_dim=opt.hid_dim * 8,
-    num_iters=3, # opt.num_iterations,
+    num_iters=3,     # opt.num_iterations,
     num_channels=3,
 ).to(device)
 

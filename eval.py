@@ -21,14 +21,26 @@ num_iterations = 3
 hid_dim = 64
 model_dir = './tmp/model1000.ckpt'
 
-model = SlotAttention(resolution, num_slots, num_iterations, hid_dim).to(device)
+model = SlotAttention(
+    input_shape=resolution,
+    num_slots= 6, # opt.num_slots,,
+    # slot_size=opt.hid_dim,
+    # hidden_dim=opt.hid_dim * 8,
+    num_iters=3,     # opt.num_iterations,
+    num_channels=3,
+).to(device)
+
 checkpoint = torch.load(model_dir,  map_location=device)
 model.load_state_dict(checkpoint['model_state_dict'])
 model.eval()
 # Forward pass (no grad)
+import time
+start = time.time()
 with torch.no_grad():
-    recon_combined, recons, masks, slots = model(image)
-
+    dict_results = model(image)
+end = time.time()
+print(f"Time taken for forward pass: {end - start:.4f} seconds")
+recon_combined, recons, masks, slots = dict_results['recons_full'], dict_results['recons'], dict_results['masks_dec'], dict_results['slots']
 # Prepare visuals
 input_img = image.squeeze().cpu().numpy().transpose(1, 2, 0)  # [C,H,W] → [H,W,C]
 recon_img = recon_combined.squeeze().detach().cpu().numpy().transpose(1, 2, 0)
@@ -52,7 +64,9 @@ axs[0, 1].axis('off')
 
 # Per-slot images
 for i in range(num_slots):
-    axs[0, i + 2].imshow(slot_imgs[i])
+    masked_img = slot_imgs[i] * slot_masks[i]  # [3, H, W] * [1, H, W]
+    masked_img = np.transpose(masked_img, (1, 2, 0))
+    axs[0, i + 2].imshow(masked_img)    
     axs[0, i + 2].set_title(f"Slot {i+1}")
     axs[0, i + 2].axis('off')
 
