@@ -1,7 +1,7 @@
 import os
 import argparse
 from dataset import *  # Assumes your PARTNET dataset is in here
-from test import *    # Assumes SlotAttention is defined in here
+from test import  SlotAttention  # Assumes SlotAttention is defined in here
 from tqdm import tqdm
 import time
 import datetime
@@ -51,7 +51,7 @@ train_loader = torch.utils.data.DataLoader(
 # -----------------------------------
 model = SlotAttention(
     input_shape=resolution,
-    num_slots= 6, # opt.num_slots,,
+    num_slots= 4, # opt.num_slots,,
     # slot_size=opt.hid_dim,
     # hidden_dim=opt.hid_dim * 8,
     num_iters=3,     # opt.num_iterations,
@@ -76,23 +76,24 @@ for epoch in range(opt.num_epochs):
     for sample in tqdm(train_loader, desc=f"Epoch {epoch}"):
         global_step += 1
 
-        # Learning rate scheduling
+        # Update learning rate
         if global_step < opt.warmup_steps:
             lr = opt.learning_rate * (global_step / opt.warmup_steps)
         else:
-            lr = opt.learning_rate
-        lr *= opt.decay_rate ** (global_step / opt.decay_steps)
+            lr = opt.learning_rate * (opt.decay_rate ** (global_step / opt.decay_steps))
         optimizer.param_groups[0]['lr'] = lr
 
-        # Input image
-        image = sample['image'].to(device)  # shape: (B, C, H, W)
+        # Prepare input
+        image = sample['image'].to(device)
+        obstacles = sample['obstacles'].to(device)
 
-        # Forward pass
-        out_dict = model(image, train=True)
-        recon_combined = out_dict['recons_full']
+        # Forward pass (obstacle supervision included)
+        out_dict = model(image, train=True, obstacles=obstacles)
+
+        # Compute loss (already includes CoM loss inside the model)
         loss = out_dict['loss']
 
-        # Backward pass
+        # Backprop
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -103,7 +104,7 @@ for epoch in range(opt.num_epochs):
     elapsed = str(datetime.timedelta(seconds=time.time() - start))
     print(f"Epoch {epoch} | Loss: {avg_loss:.6f} | Time: {elapsed}")
 
-    # Save model
-    if epoch % 10 == 0:
+    # Save checkpoint
+    if epoch % 10 == 0 or epoch == opt.num_epochs - 1:
         os.makedirs(os.path.dirname(opt.model_dir), exist_ok=True)
         torch.save({'model_state_dict': model.state_dict()}, opt.model_dir)

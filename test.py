@@ -468,6 +468,7 @@ class SlotAttention(nn.Module):
         hidden_dim=512,
         num_iters=2,
         num_channels=3,
+        max_obstacles=3,
     ):
         super().__init__()
         self.input_shape = input_shape
@@ -476,6 +477,7 @@ class SlotAttention(nn.Module):
         self.num_iters = num_iters
         self.num_slots = num_slots
         self.slot_size = slot_size
+        self.max_obstacles = max_obstacles
         if self.resolution[0] == 128:
             self.visual_resolution = tuple(i // 2 for i in self.resolution)
             feature_multiplier = 1
@@ -489,6 +491,14 @@ class SlotAttention(nn.Module):
 
         self.init_latents = nn.Parameter(
                     nn.init.normal_(torch.empty(1, self.num_slots, self.slot_size)))
+
+        ## OBSTACLES
+        self.obstacle_encoder = nn.Sequential(
+        nn.Linear(2, hidden_dim),
+        nn.ReLU(),
+        nn.Linear(hidden_dim, hidden_dim)
+)
+
 
         ## ENCODER :Classical CNN
         self.encoder = make_slot_attention_encoder(
@@ -525,6 +535,27 @@ class SlotAttention(nn.Module):
             initial_size=self.dec_resolution,
             pos_embed=CoordinatePositionEmbed(self.slot_size, self.dec_resolution),
         )
+        
+    def compute_mask_centers(self, masks: torch.Tensor) -> torch.Tensor:
+        """Compute (x, y) center of mass for each mask in normalized coordinates."""
+        if masks.ndim == 4:
+            masks = masks.unsqueeze(2)  # → [B, N, 1, H, W]
+
+        B, N, _, H, W = masks.shape
+        masks = masks.squeeze(2)  # [B, N, H, W]
+
+        y_grid = torch.linspace(-1, 1, steps=H, device=masks.device)
+        x_grid = torch.linspace(-1, 1, steps=W, device=masks.device)
+        yy, xx = torch.meshgrid(y_grid, x_grid, indexing="ij")
+        grid = torch.stack([xx, yy], dim=0)  # [2, H, W]
+        grid = grid.unsqueeze(0).unsqueeze(0)  # [1, 1, 2, H, W]
+
+        weighted_coords = masks.unsqueeze(2) * grid  # [B, N, 2, H, W]
+        numerator = weighted_coords.sum(dim=[-1, -2])  # [B, N, 2]
+        denominator = masks.sum(dim=[-1, -2]).unsqueeze(-1)  # [B, N, 1]
+
+        centers = numerator / (denominator + 1e-8)  # avoid division by zero
+        return centers  # [B, N, 2]
 
     def encode(self, img):
         B, C, H, W = img.shape
@@ -552,7 +583,7 @@ class SlotAttention(nn.Module):
             recon_combined = out_dict["recon_combined"]
         return recon_combined, recons, masks, slots
     
-    def forward(self, img, train=True):
+    def forward(self, img, train=True, obstacles: Optional[torch.Tensor] = None ):
         is_video = img.ndim == 5  # (B, T, C, H, W)
         
         if is_video:
@@ -567,6 +598,10 @@ class SlotAttention(nn.Module):
             'masks_enc': masks_enc,
             'video': img,
         }
+        
+        if obstacles is not None:
+            obstacle_features = self.obstacle_encoder(obstacles)  # shape: [B, N_obs, hid_dim]
+            out_dict['obstacle_features'] = obstacle_features
 
         if train:
             recons_full, recons, masks_dec, slots = self.decode(slots)
@@ -578,7 +613,7 @@ class SlotAttention(nn.Module):
                 recons = recons.unflatten(0, (B, T))
                 masks_dec = masks_dec.unflatten(0, (B, T))
             else:
-                loss = self.loss_function(img, recons_full)
+                loss = self.loss_function(img, recons_full, masks=masks_dec, obstacles=obstacles)
                 recon_combined = recons_full
 
             out_dict['masks_dec'] = masks_dec
@@ -589,10 +624,19 @@ class SlotAttention(nn.Module):
 
         return out_dict
 
-    def loss_function(self, img, recon_combined):
+    def loss_function(self, img, recon_combined, masks=None, obstacles=None, mask_loss_weight=1.0):
         """Compute the loss function."""
         loss = F.mse_loss(recon_combined, img, reduction='mean')
-        return loss
 
+        if masks is not None and obstacles is not None:
+            # Compute CoM from masks
+            pred_centers = self.compute_mask_centers(masks)  # [B, N, 2]
+            # Compute CoM loss
+            com_loss = F.mse_loss(pred_centers[:, :self.max_obstacles], obstacles, reduction='mean')
+            loss += mask_loss_weight * com_loss
+
+        return loss
+    
+    
     def output_shape(self):
         return self.output_shape
