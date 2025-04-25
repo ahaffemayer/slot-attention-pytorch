@@ -499,7 +499,7 @@ class SlotAttention(nn.Module):
         nn.Linear(hidden_dim, hidden_dim)
 )
 
-
+        self.obstacle_slot_init = nn.Linear(hidden_dim, self.slot_size)
         ## ENCODER :Classical CNN
         self.encoder = make_slot_attention_encoder(
             inp_dim=self.num_channels,
@@ -601,7 +601,17 @@ class SlotAttention(nn.Module):
         
         if obstacles is not None:
             obstacle_features = self.obstacle_encoder(obstacles)  # shape: [B, N_obs, hid_dim]
+            obstacle_slots = self.obstacle_slot_init(obstacle_features)  # [B, N_obs, slot_size]
+
+            num_fill = self.num_slots - self.max_obstacles
+            assert num_fill >= 0, "max_obstacles exceeds num_slots"
+
+            filler_slots = self.init_latents[:, :num_fill, :].repeat(B, 1, 1)
+            slots = torch.cat([obstacle_slots, filler_slots], dim=1)
             out_dict['obstacle_features'] = obstacle_features
+        else:
+            slots = self.init_latents.repeat(B, 1, 1)
+            
 
         if train:
             recons_full, recons, masks_dec, slots = self.decode(slots)
@@ -628,12 +638,12 @@ class SlotAttention(nn.Module):
         """Compute the loss function."""
         loss = F.mse_loss(recon_combined, img, reduction='mean')
 
-        if masks is not None and obstacles is not None:
-            # Compute CoM from masks
-            pred_centers = self.compute_mask_centers(masks)  # [B, N, 2]
-            # Compute CoM loss
-            com_loss = F.mse_loss(pred_centers[:, :self.max_obstacles], obstacles, reduction='mean')
-            loss += mask_loss_weight * com_loss
+        # if masks is not None and obstacles is not None:
+        #     # Compute CoM from masks
+        #     pred_centers = self.compute_mask_centers(masks)  # [B, N, 2]
+        #     # Compute CoM loss
+        #     com_loss = F.mse_loss(pred_centers[:, :self.max_obstacles], obstacles, reduction='mean')
+        #     loss += mask_loss_weight * com_loss
 
         return loss
     
