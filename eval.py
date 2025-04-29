@@ -1,6 +1,6 @@
 import torch
 from dataset import PARTNET
-from model import SlotAttention
+from model import SlotAttention, SlotAttentionEncodeOnly
 import matplotlib.pyplot as plt
 import numpy as np
 import random
@@ -32,15 +32,46 @@ model = SlotAttention(
 
 
 checkpoint = torch.load(model_dir,  map_location=device)
-model.load_state_dict(checkpoint['model_state_dict'])
+state_dict = checkpoint['model_state_dict']
+model.load_state_dict(state_dict)
 model.eval()
+
+encoder_only_model = SlotAttentionEncodeOnly(
+    input_shape=resolution,
+    num_slots= num_slots, # opt.num_slots,,
+    # slot_size=opt.hid_dim,
+    # hidden_dim=opt.hid_dim * 8,
+    num_iters=3,     # opt.num_iterations,
+    num_channels=3,
+).to(device)
+
+
+# You might filter out the decoder-related parameters:
+encoder_only_dict = {k: v for k, v in state_dict.items() if not k.startswith("decoder")}
+encoder_only_model.load_state_dict(encoder_only_dict, strict=False)
+encoder_only_model.eval()
 # Forward pass (no grad)
 import time
 start = time.time()
 with torch.no_grad():
     dict_results = model(image)
 end = time.time()
-print(f"Time taken for forward pass: {end - start:.4f} seconds")
+print(f"Time taken for the encoder / decoder forward pass: {end - start:.4f} seconds")
+
+# Forward pass
+start = time.time()
+
+with torch.no_grad():
+    output = encoder_only_model(image)
+
+# Extract slot latent vectors
+slots = output['slots']  # Shape: [B, num_slots, slot_size]
+print(f"slots : {slots.shape}")
+end = time.time()
+print(f"Time taken for the encoder forward pass: {end - start:.4f} seconds")
+print("Slots shape:", slots.shape)
+
+
 recon_combined, recons, masks, slots = dict_results['recons_full'], dict_results['recons'], dict_results['masks_dec'], dict_results['slots']
 # Prepare visuals
 input_img = image.squeeze().cpu().numpy().transpose(1, 2, 0)  # [C,H,W] → [H,W,C]

@@ -596,3 +596,91 @@ class SlotAttention(nn.Module):
 
     def output_shape(self):
         return self.output_shape
+    
+    
+
+class SlotAttentionEncodeOnly(nn.Module):
+    def __init__(
+        self,
+        input_shape,
+        num_slots=8,
+        slot_size=64,
+        hidden_dim=512,
+        num_iters=2,
+        num_channels=3,
+    ):
+        super().__init__()
+        self.input_shape = input_shape
+        self.num_channels = num_channels
+        self.resolution = input_shape
+        self.num_iters = num_iters
+        self.num_slots = num_slots
+        self.slot_size = slot_size
+        if self.resolution[0] == 128:
+            self.visual_resolution = tuple(i // 2 for i in self.resolution)
+            feature_multiplier = 1
+            downsample = 1
+        elif self.resolution[0] == 64:
+            self.visual_resolution = self.resolution
+            feature_multiplier = 0.5
+            downsample = 0
+        else:
+            raise ValueError(f"Invalid resolution: {self.resolution} needed 128x128 or 64x64")
+
+        self.init_latents = nn.Parameter(
+                    nn.init.normal_(torch.empty(1, self.num_slots, self.slot_size)))
+
+        ## ENCODER :Classical CNN
+        self.encoder = make_slot_attention_encoder(
+            inp_dim=self.num_channels,
+            feature_multiplier=feature_multiplier,
+            downsamplings=downsample,
+        )
+        self.visual_channels = int(64 * feature_multiplier)
+        self.projection_layer = CoordinatePositionEmbed(self.visual_channels, self.visual_resolution, proj_dim=slot_size)
+
+        ## OBJECT-CENTRIC MODULE : Slot-Attention for Video == SA + Transformer
+        self.grouping = SlotAttentionLayer(
+            inp_dim=slot_size,
+            slot_dim=self.slot_size,
+            kvq_dim=self.slot_size*2,
+            n_iters=self.num_iters,
+            hidden_dim=hidden_dim,
+            use_gru=True,
+            use_mlp=True,
+        )
+
+
+    def encode(self, img):
+        B, C, H, W = img.shape
+
+        h = self.encoder(img)
+        h = self.projection_layer(h)
+
+        # Extract slots
+        prev_slots = self.init_latents.repeat(B, 1, 1)
+        out_dict = self.grouping(prev_slots, h, n_iters=self.num_iters)
+        slots = out_dict["slots"]  # [B, num_slots, slot_size]
+        masks = out_dict["masks"] # [B, num_slots, 1, H, W]
+        return slots, masks
+    
+    def forward(self, img, train=True):
+        is_video = img.ndim == 5  # (B, T, C, H, W)
+        
+        if is_video:
+            B, T, C, H, W = img.shape
+            img = img.flatten(0, 1)  # → (B*T, C, H, W)
+        else:
+            B, T = img.shape[0], 1  # treat static images as 1-frame videos
+
+        slots, masks_enc = self.encode(img)
+        out_dict = {
+            'slots': slots,
+            'masks_enc': masks_enc,
+            'video': img,
+        }
+
+        return out_dict
+
+    def output_shape(self):
+        return self.output_shape
