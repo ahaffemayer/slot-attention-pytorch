@@ -1,6 +1,6 @@
 import torch
 from dataset import PARTNET
-from test import SlotAttention
+from model import SlotAttention
 import matplotlib.pyplot as plt
 import numpy as np
 import random

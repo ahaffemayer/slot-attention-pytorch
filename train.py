@@ -1,7 +1,7 @@
 import os
 import argparse
 from dataset import *  # Assumes your PARTNET dataset is in here
-from test import  SlotAttention  # Assumes SlotAttention is defined in here
+from model import  SlotAttention  # Assumes SlotAttention is defined in here
 from tqdm import tqdm
 import time
 import datetime
@@ -45,7 +45,6 @@ train_loader = torch.utils.data.DataLoader(
     shuffle=True,
     num_workers=opt.num_workers
 )
-
 # -----------------------------------
 # Model
 # -----------------------------------
@@ -76,24 +75,23 @@ for epoch in range(opt.num_epochs):
     for sample in tqdm(train_loader, desc=f"Epoch {epoch}"):
         global_step += 1
 
-        # Update learning rate
+        # Learning rate scheduling
         if global_step < opt.warmup_steps:
             lr = opt.learning_rate * (global_step / opt.warmup_steps)
         else:
-            lr = opt.learning_rate * (opt.decay_rate ** (global_step / opt.decay_steps))
+            lr = opt.learning_rate
+        lr *= opt.decay_rate ** (global_step / opt.decay_steps)
         optimizer.param_groups[0]['lr'] = lr
 
-        # Prepare input
-        image = sample['image'].to(device)
-        obstacles = sample['obstacles'].to(device)
+        # Input image
+        image = sample['image'].to(device)  # shape: (B, C, H, W)
 
-        # Forward pass (obstacle supervision included)
-        out_dict = model(image, train=True, obstacles=obstacles)
-
-        # Compute loss (already includes CoM loss inside the model)
+        # Forward pass
+        out_dict = model(image, train=True)
+        recon_combined = out_dict['recons_full']
         loss = out_dict['loss']
 
-        # Backprop
+        # Backward pass
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -104,7 +102,7 @@ for epoch in range(opt.num_epochs):
     elapsed = str(datetime.timedelta(seconds=time.time() - start))
     print(f"Epoch {epoch} | Loss: {avg_loss:.6f} | Time: {elapsed}")
 
-    # Save checkpoint
-    if epoch % 10 == 0 or epoch == opt.num_epochs - 1:
+    # Save model
+    if epoch % 10 == 0:
         os.makedirs(os.path.dirname(opt.model_dir), exist_ok=True)
         torch.save({'model_state_dict': model.state_dict()}, opt.model_dir)
